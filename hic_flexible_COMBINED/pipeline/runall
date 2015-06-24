@@ -1,0 +1,241 @@
+#!/bin/bash -ex
+
+# USAGE: runall step_number 
+step=$1
+# argument list: 0:<replicates combined or not>
+#                1:<LIBRARY ID, given to the library: (HiC_SC_R2, ...) for separate replicates, (HiC_SC, ...) for replicates combined>
+#                2:<directory with cleanedPairs - output of the mappingHiC-pipeline 
+#                3:<project directory. Note: project directory is the hic_pipeline folder, different from the project directory in mappingHiC-pipeline>
+#                4:<path to python>
+#                5:<path to bedtools>
+#                6:<path to bin directory that contains all executable scripts>
+#                7:<path to preprocessedForBias directory>
+#                8:<file with HindIII restriction enzyme fragments>
+#                9:<file with chromosome sizes>
+#                10:<file with black list regions>
+#                11:<Read length>
+
+#replicates=combined # replicates combined
+replicates=not # individual replicates
+#libs=(HiC_SC)  # if replicates=combined
+libs=(HiC_SC_R2)  # if replicates=not
+
+DATADIR=/srv/gsfs0/projects/kundaje/users/mtaranov/projects/dynamic3D/FIT-HI-C/mappingHiC-pipeline_COMBINED/data/cleanedPairs
+PROJDIR=/srv/gsfs0/projects/kundaje/users/mtaranov/projects/dynamic3D/FIT-HI-C/hic_flexible_COMBINED
+python=/srv/gs1/software/python/python-2.7/bin/python
+bedtools=/srv/gs1/software/bedtools/2.21.0/bin/bedtools
+BINDIR=$PROJDIR/bin
+biasdir=$PROJDIR/data/preprocessedForBias
+REfile=/srv/gsfs0/projects/kundaje/users/mtaranov/projects/dynamic3D/FIT-HI-C/hic_flexible_COMBINED/data/reference_genomes/hg19/Digest_ENCODEHg19_HindIII_None_19-38-29_25-11-2014.txt
+chrSizes=/srv/gsfs0/projects/kundaje/users/mtaranov/projects/dynamic3D/FIT-HI-C/hic_flexible_COMBINED/data/reference_genomes/hg19/ref.fa.fai
+blacklist=/srv/gsfs0/projects/kundaje/users/mtaranov/projects/dynamic3D/FIT-HI-C/hic_flexible_COMBINED/data/reference_genomes/hg19/wgEncodeHg19ConsensusSignalArtifactRegions.bed.gz
+ReadLength=51
+
+#arguments used for naming the folders
+org=human
+ref=hg19
+RE=HindIII
+
+#RESOLUTION @ RE-fragment
+RESOLUTION=(10)
+#IntrachrThres # defined below in step 1
+mappThres=0.5 # mappability threshold in step 4 
+
+#Fit-Hi-C parameters
+noOfBins=200 
+distUpThres=10000000 #10Mb
+#distLowThres   I used distLowThresRESOLUTION*5000   # defined below in step 6
+
+# Note: additional variables need to be specified in bin/step1_get-contactCounts-atRESize,  bin/step4_sparseICEnormalize and bin/step6_fithic
+
+################################################################ 
+#### Below are the steps taken here to go from cleanedPairs files 
+#### to before/after ICE contact counts at different resolutions
+################################################################
+# step1  write out file with RE fragments @ RE-resolution. Note: needs to be run only once for a particular resolution
+# step2  get contacts at RE window size
+# step2a OPTIONAL: plot raw contact counts as function of distace
+# step3  preprocess genome for mappability. Note: needs to be run only once for a particular resolution
+# step4  normalize contact maps using ICE 
+# step4a OPTIONAL: plot distribution of biases
+# step5  calculate total contacts per RE fragment
+# step6  assign statistical significances using fit-hi-c on before and after ICE data
+################################################################
+
+# write out file with RE fragments @ RE-resolution
+# plae it into  $PROJDIR/data/RESites
+if [[ $step == 1 ]]; then
+        outdirREsites=$PROJDIR/data/RESites
+        mkdir -p $outdirREsites
+        for (( i=0; i<${#RESOLUTION[@]}; i++ )); do
+              w=${RESOLUTION[$i]}
+              outfileREsites=$outdirREsites/REFrags.RE$w
+              outfileREsitesMids=$outdirREsites/REFragsMid.RE$w
+              $python $PROJDIR/bin/get-contactCounts-atRESize.py $REfile $w $outfileREsites $outfileREsitesMids
+        done
+
+## Get contacts at RE resolution
+## Removes reads that overlap with black list and pairs that are closer than threshold distance
+## place results into $PROJDIR/data/interactionCounts/beforeICE/
+
+# Note: additional variable need to be specified in bin/step2_get-contactCounts-atRESize
+elif [[ $step == 2 ]]; then
+   # Replicates separetely
+    for (( j=0; j<${#libs[@]}; j++ )); do
+        lib=${libs[$j]}
+	for (( i=0; i<${#RESOLUTION[@]}; i++ )); do
+                w=${RESOLUTION[$i]}
+                IntrachrThres=$(($w*5000)) # distance threshold for calculating intrachromosomal interactions
+#                if [ $replicates == combined ]; then
+#                    infile=$DATADIR/${lib}_R?/${lib}_R?_cleanedPairs.gz # replicates combined
+#                else
+#                    infile=$DATADIR/${lib}/${lib}_cleanedPairs.gz # individual replicates
+#                fi
+ 		$BINDIR/step2_get-contactCounts-atRESize $w $IntrachrThres $lib $PROJDIR $replicates $python $bedtools  $ReadLength $blacklist
+        done
+    done
+
+# OPTIONAL: Plot raw contact counts
+## place results into $PROJDIR/data/Plots
+
+elif [[ $step == '2a' ]]; then
+        for (( i=0; i<${#RESOLUTION[@]}; i++ )); do
+                w=${RESOLUTION[$i]}
+                for (( j=0; j<${#libs[@]}; j++ )); do
+                        lib=${libs[$j]}
+                        intxndir=$PROJDIR/data/interactionCounts/beforeICE/RE$w
+                        outdir=$PROJDIR/data/Plots
+                        mkdir -p $outdir/RE$w
+                        outfile=$outdir/${lib}_RawContactCounts_RE$w
+                        intxfile=$intxndir/${lib}_ListOfContacts.gz
+                        $PROJDIR/bin/step2a_ScatterContactCounts $intxfile $outfile $python $lib $w $PROJDIR 
+                done
+        done
+## preprocess the genome to get mappability per fragment 
+## place results into $PROJDIR/data/preprocessedForBias
+## the output file will have four fields:
+## <chr> <mid> <RE site> <mappability> 
+
+elif [[ $step == 3 ]]; then
+	for (( i=0; i<${#RESOLUTION[@]}; i++ )); do
+        w=${RESOLUTION[$i]}
+        REsites=$PROJDIR/data/RESites/REFrags.RE$w
+        $BINDIR/step3_preprocess_for_bias_pipeline.sh $PROJDIR $python $biasdir $w $org $ref $REsites $ReadLength $RE
+        done
+## Now normalize each library using sparse ICE implementation
+## place results into $PROJDIR/data/interactionCounts/afterICE
+
+# Note: additional variable need to be specified in bin/step4_sparseICEnormalize
+elif [[ $step == 4 ]]; then
+
+	intxndir=$PROJDIR/data/interactionCounts/beforeICE
+	outdir=$PROJDIR/data/interactionCounts/afterICE
+	mkdir -p $outdir
+	biasdir=$PROJDIR/data/preprocessedForBias
+
+	for (( i=0; i<${#RESOLUTION[@]}; i++ )); do
+        w=${RESOLUTION[$i]}
+		for ((j=0; j<${#libs[@]}; j++ )); do
+			lib=${libs[$j]}
+			echo $lib $ref $org $RE
+			mkdir -p $outdir/RE$w
+			outfile=$outdir/RE$w/${lib}_ListOfContacts_after_ICE
+			biasfile=$biasdir/$org-$ref.$RE.RE$w
+			intxfile=$intxndir/RE$w/${lib}_ListOfContacts.gz
+			$PROJDIR/bin/step4_sparseICEnormalize $lib $biasfile $intxfile $mappThres $PROJDIR $outfile $w $python
+  
+		done
+	done
+# OPTIONAL: plot distribution of biases
+## place results into $PROJDIR/data/Plots
+elif [[ $step == '4a' ]]; then
+
+        outdir=$PROJDIR/data/Plots
+        intxndir=$PROJDIR/data/interactionCounts/afterICE
+
+        for (( i=0; i<${#RESOLUTION[@]}; i++ )); do
+        w=${RESOLUTION[$i]}
+                for ((j=0; j<${#libs[@]}; j++ )); do
+                        lib=${libs[$j]}
+                        echo $lib $ref $org $RE
+                        mkdir -p $outdir/RE$w
+                        outfile=$outdir/RE$w/${lib}_DistOfBiases_w$w
+                        intxfile=$intxndir/RE$w/${lib}_ListOfContacts_after_ICE.biases.gz
+                        $python $PROJDIR/bin/plot_DistOfBiases.py $intxfile $outfile $lib $w
+
+                done
+        done
+
+## calculate total contacts per fragment/window
+## place results into $PROJDIR/data/ContactsPerFragment
+## the output files will have five fields:
+## <chr> <anything> <mid> <counts> <anything> 
+
+elif [[ $step == 5 ]]; then
+
+intxndir=$PROJDIR/data/interactionCounts/beforeICE
+
+ContactsPerFragDir=$PROJDIR/data/ContactsPerFragment
+mkdir -p $ContactsPerFragDir
+
+	for (( i=0; i<${#RESOLUTION[@]}; i++ )); do
+        w=${RESOLUTION[$i]}
+                for (( j=0; j<${#libs[@]}; j++ )); do
+                        lib=${libs[$j]}
+                        mkdir -p $ContactsPerFragDir/RE$w
+                        intxfile=$intxndir/RE$w/${lib}_ListOfContacts.gz                        
+                        outfile=$ContactsPerFragDir/RE$w/${lib}_ContactsPerFragment
+                        REsitesMid=$PROJDIR/data/RESites/REFragsMid.RE$w
+                        $PROJDIR/bin/step5-ContactsPerFragment $intxfile $REsitesMid $outfile $python $PROJDIR $w $lib $ContactsPerFragDir/RE$w
+
+
+                done
+        done
+
+## do the fit-hi-c finally
+## place results into $PROJDIR/data/fit-hi-c-results
+
+# Note: additional variable need to be specified in bin/step6_fithic
+
+elif [[ $step == 6 ]]; then
+
+intxndir=$PROJDIR/data/fit-hi-c-results
+mkdir -p $intxndir
+
+	for (( i=0; i<${#RESOLUTION[@]}; i++ )); do
+        w=${RESOLUTION[$i]}
+                distLowThres=$(($w*5000))
+                discBinsize=$(($(($distUpThres-$distLowThres))/$noOfBins))
+                echo $discBinsize
+                for (( j=0; j<${#libs[@]}; j++ )); do
+                        lib=${libs[$j]}
+                        mkdir -p $intxndir/RE$w
+                        for htmlName in beforeICE afterICE; do
+                                $PROJDIR/bin/step6_fithic $PROJDIR $w $noOfBins $htmlName $distUpThres $distLowThres $discBinsize $intxndir/RE$w $lib
+                        done
+                done
+done
+
+## fit-hi-c with +/-std boundaries on biases
+elif [[ $step == '6a' ]]; then
+
+intxndir=$PROJDIR/data/fit-hi-c-results_std
+mkdir -p $intxndir
+
+        for (( i=0; i<${#RESOLUTION[@]}; i++ )); do
+        w=${RESOLUTION[$i]}
+                distLowThres=$(($w*5000))
+                discBinsize=$(($(($distUpThres-$distLowThres))/$noOfBins))
+                echo $discBinsize
+                for (( j=0; j<${#libs[@]}; j++ )); do
+                        lib=${libs[$j]}
+                        mkdir -p $intxndir/RE$w
+                        for htmlName in beforeICE afterICE; do
+                                $PROJDIR/bin/step6_fithic_std $PROJDIR $w $noOfBins $htmlName $distUpThres $distLowThres $discBinsize $intxndir/RE$w $lib
+                        done   
+                done
+done
+
+exit
+fi
+

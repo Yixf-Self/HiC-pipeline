@@ -1,0 +1,46 @@
+#!/bin/bash
+
+# step 4 operations:
+#  - normalizes each library using sparse ICE implementation
+#  - calculate biases for each window.
+#  - places results into $PROJDIR/data/interactionCounts/afterICE
+
+# argument list: 1:<library ID> 
+#                2:<preprocessedForBias file> 
+#                3:<file with contacts at fixed window size> 
+#                4:<mappability threshold>
+#                5:<project directory>          
+#                6:<file to write biases>
+#                7:<path to python>
+#                8:<resolution/window size>
+#
+
+set -o nounset
+set -o pipefail
+set -o errexit 
+
+lib=$1
+intxnFile=$2
+PROJDIR=$3
+outfile=$4
+w=$5
+python=$6
+chrlens=$7
+
+bindir=$PROJDIR/bin
+
+if [ ! -f $intxnFile ]; then
+echo "Data file $intxnFile does not exist!"
+exit
+fi
+
+  jobfile=${lib}-step7-PlotRawContacts-w$w.job
+  if [ -f $jobfile ]; then
+  echo "Job script $jobfile already exists!"
+  exit
+  fi    
+  
+    echo "$python $bindir/plot_counts.py.txt $intxnFile $chrlens $outfile $w" >> $jobfile
+    chmod 777 $jobfile
+    
+    qsub -l h_vmem=500G -l h_rt=10:00:00 -m ea  -M taranova.maryna@gmail.com -o $PROJDIR/pipeline/o.${lib}_w${w}_step7_out -e $PROJDIR/pipeline/e.${lib}_w${w}_step7_error ${jobfile}

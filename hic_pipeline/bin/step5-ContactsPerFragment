@@ -1,0 +1,55 @@
+#!/bin/bash
+
+# step 5 operations:
+#  - calculate total numbmer of contacts coming out of each window.
+#  - places results into $PROJDIR/data/ContactsPerFragment
+
+# argument list: 1:<file with contacts at fixed window size> 
+#                2:<file with window midpoints> 
+#                3:<file to write total contacts per window> 
+#                4:<path to python>
+#                5:<project directory>          
+#                6:<resolution/window size>
+#                7:<library ID>
+#                8:<output directory>
+#
+
+ListOfContacts=$1
+FixedWindowsMidpoints=$2
+outfile=$3
+python=$4
+PROJDIR=$5
+w=$6
+lib=$7
+outdir=$8
+
+
+tmp=$outdir/${lib}_tmp
+ContactsPerFragment=$outdir/${lib}_ContactsPerFragmentTemp
+SortedContacts=$outdir/${lib}_SortedContacts
+command1="touch $tmp"
+command2="touch $ContactsPerFragment"
+command3="zcat $ListOfContacts | awk '{print \$1, \$2, \$5}' > $tmp"
+command4="zcat $ListOfContacts | awk '{print \$3, \$4, \$5}' >> $tmp"
+command5="sort -k 1,1 $tmp > $SortedContacts" 
+command6="echo \"\" >> $SortedContacts" 
+command7="cat $SortedContacts | gawk '(\$1==key1 && \$2==key2) { sum+=\$3} (\$1 != key1 || \$2 != key2) {if (NR>1){print key1, key2, sum} key1=\$1; key2=\$2; sum=\$3}' > $ContactsPerFragment"
+command8="$python $PROJDIR/bin/MergeCounts.py $FixedWindowsMidpoints  $ContactsPerFragment $outfile"
+command9="gzip $outfile"
+command10="rm $tmp $ContactsPerFragment $SortedContacts"
+
+jobfile=$PROJDIR/pipeline/${lib}-step5-ContactsPerFragment-w${w}.job
+    echo "$command1" >> $jobfile
+    echo "$command2" >> $jobfile
+    echo "$command3" >> $jobfile
+    echo "$command4" >> $jobfile
+    echo "$command5" >> $jobfile
+    echo "$command6" >> $jobfile
+    echo "$command7" >> $jobfile
+    echo "$command8" >> $jobfile
+    echo "$command9" >> $jobfile
+    echo "$command10" >> $jobfile
+
+chmod 777 $jobfile
+
+qsub -l testq=1  -m ea  -M taranova.maryna@gmail.com -o $PROJDIR/pipeline/o.${lib}_step5_out -e $PROJDIR/pipeline/e.${lib}_step5_error ${jobfile}

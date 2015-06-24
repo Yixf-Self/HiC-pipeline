@@ -1,0 +1,29 @@
+#!/bin/bash
+
+libs=(HiC_SC_R2 HiC_D3_R2 HiC_D6_R2 HiC_SC_R8 Hi_D3_R8 HiC_D6_R8 captureC_SC_R2 captureC_D3_R2 captureC_D6_R2 captureC_SC_R8 captureC_D3_R8 captureC_D6_R8)
+##pass this info to all the scripts
+
+PROJDIR=/srv/gsfs0/projects/kundaje/users/mtaranov/projects/dynamic3D/FIT-HI-C 
+bwa=/srv/gs1/software/bwa/bwa-0.7.7/bin/bwa
+INDICES=/srv/gsfs0/projects/kundaje/users/mtaranov/projects/dynamic3D/bwa_index/index-0.7.7/encodeHg19Male_bwa-0.7.7
+samtools=/srv/gs1/software/samtools/samtools-0.1.19/bin/samtools
+python=/srv/gs1/software/python/python-2.7/bin/python
+python_script=$PROJDIR/mappingHiC-pipeline/sort_loci.py
+rawReads=/srv/gsfs0/projects/kundaje/users/mtaranov/projects/dynamic3D/rawReads
+
+##run pipeline arguments:
+##		1:	<step 1,2,3,4> project directory, a directory in which mappingHiC-pipeline folder is located
+##		2:	<step 1> path to bwa
+##		3:	<step 1,2,3,4> LIBRARY ID (ex: captureC_SC_R2, HiC_SC_R8)
+##		4:	<step 1,2> Number of mismatches allowed in sequence alignments
+##		5:	<step 1> path to bwa alignment indices
+##		6:	<step 2> path to samtools
+##              7:      <step 4> path to python
+##              8:      <step 4> path to sort_loci.py 
+##              9:      <step 1> path to a directory with raw reads that are orginized into libs (captureC_R?_?? or HiC_R?_??), directories of raw reads with each hic-paired read set  having captureC_R?_??_1.fq.gz captureC_R?_??_2.fq.gz
+
+for (( i=0; i<${#libs[@]}; i++ )); do
+	lib=${libs[$i]}
+	./pipeline  ${PROJDIR}  $bwa ${lib} 2 $INDICES $samtools $python $python_script $rawReads
+done
+ 

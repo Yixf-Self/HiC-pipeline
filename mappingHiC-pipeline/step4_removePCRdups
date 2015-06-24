@@ -1,0 +1,67 @@
+#!/bin/bash
+
+# step 1 operations- Remove the read pairs that map to exactly same coordinates (both ends). Keep only one pair out of many copies
+# argument list: 1:<project directory> 
+#                2:<LIBRARY ID, given to the library in the form captureC_R?_?? or HiC_R?_??>
+#                3:<path to python>
+#                4:<path to ort_loci.py>
+PROJDIR=$1
+LIBRARYID=$2
+python=$3
+python_script=$4
+
+EXTRACTEDDIR=${PROJDIR}/mappingHiC-pipeline/data/extractedPairs/${LIBRARYID}
+#directoy for pcr duplicate eliminateds
+CLEANEDDIR=${PROJDIR}/mappingHiC-pipeline/data/cleanedPairs/${LIBRARYID}
+STATSDIR=${PROJDIR}/mappingHiC-pipeline/data/stats
+
+LC_COLLATE=C; LC_ALL=C ; LANG=C ; export LC_ALL LANG
+
+mkdir -p $CLEANEDDIR
+
+infile_zipped=$EXTRACTEDDIR/${LIBRARYID}_extractedPairs.gz
+infile=$EXTRACTEDDIR/${LIBRARYID}_extractedPairs
+if [ ! -f $infile_zipped ]; then
+echo "Data file $infile does not exist!"
+exit
+fi
+
+#file to write out  pcr duplicate eliminateds
+outfile=$CLEANEDDIR/${LIBRARYID}_cleanedPairs
+if [ -f $outfile ]; then
+echo "File $outfile already exists!"
+exit
+fi
+outfile2=$STATSDIR/NumberOfCleanedPairs
+if [ -f $outfile2 ]; then
+echo "File $outfile2 already exists!"
+exit
+fi
+
+jobfile=${LIBRARYID}_step4.job
+if [ -f $jobfile ]; then
+echo "Job script for step4 already exists!"
+exit
+fi
+echo "LC_COLLATE=C; LC_ALL=C ; LANG=C ; export LC_ALL LANG">> $jobfile
+echo "echo \"Environment: LC_COLLATE=\$LC_COLLATE, LC_ALL = \$LC_ALL, LANG = \$LANG \" " >> $jobfile
+echo "touch $outfile" >> $jobfile
+echo "touch $outfile2" >> $jobfile
+
+echo "" >> $jobfile
+echo "gunzip $infile_zipped " >> $jobfile
+echo "countBefore=\`wc -l $infile | awk '{print \$1}' \`" >> $jobfile
+	
+echo "cat $infile | $python $python_script - 2 | awk '{s1=\"+\"; s2=\"+\"; if (\$2==\"16\") {s1=\"-\"}; if (\$6==\"16\") {s2=\"-\"}; printf(\"%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n\", \$3, \$4, s1, \$7, \$8, s2, \$5, \$9, \$1)}' | sort -u -k1,6 | awk '{ print \$9 \"\\t\" \$3 \"\\t\" \$1 \"\\t\" \$2 \"\\t\" \$7 \"\\t\" \$6 \"\\t\" \$4 \"\\t\" \$5 \"\\t\" \$8}' >> $outfile" >> $jobfile
+
+echo "countAfter=\`wc -l  $outfile | awk '{print \$1}' \`" >> $jobfile
+echo "" >> $jobfile
+echo "gzip $outfile " >> $jobfile
+echo "gzip $infile " >> $jobfile
+echo "echo -e \"lib\\tpairsBeforePCR\\tpairsAfterPCR\" >> $outfile2" >> $jobfile
+echo "echo -e \"${LIBRARYID}\\t\$countBefore\\t\$countAfter\" >> $outfile2" >> $jobfile
+
+chmod 777 $jobfile
+        qsub -l h_vmem=20G -l h_rt=6:00:00 -m ea  -M taranova.maryna@gmail.com -o $PROJDIR/mappingHiC-pipeline/o.step4_${LIBRARYID}_out -e $PROJDIR/mappingHiC-pipeline/e.step4_${LIBRARYID}_error ${jobfile}
+
+	

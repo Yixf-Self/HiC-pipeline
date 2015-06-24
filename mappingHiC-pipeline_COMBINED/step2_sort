@@ -1,0 +1,95 @@
+#!/bin/bash -ex
+
+# step 2 operations- identify mapped and nonmaped reads, sort and reformat. Output: plain text format with mapped extension in SORTEDDIR
+#mapped:
+# - samtools filtering flag 4 
+# - scores >= 30
+# - edit distances <= 2 
+
+# argument list: 1:<project directory> 
+#                2:<LIBRARY ID, given to the library in the form captureC_SC_R2 or HiC_SC_R2>
+#                3:<Number of mismatches allowed in the alignments>
+#                4:<path to samtools>
+PROJDIR=$1
+LIBRARYID=$2
+NUMBEROFMISMATCHES=$3
+SAMTOOLS=$4
+
+#directory with the alignment results
+MAPPEDDIR=${PROJDIR}/mappingHiC-pipeline/data/mappedReads/${LIBRARYID}
+#directory to store the sorted results
+SORTEDDIR=${PROJDIR}/mappingHiC-pipeline/data/sortedMappedReads/${LIBRARYID}
+#alignment statistics directory
+STATSDIR=${PROJDIR}/mappingHiC-pipeline/data/stats
+
+#create the sorted directory, -p ensures no errors occur
+mkdir -p $SORTEDDIR
+#create the alignment statistics directory
+mkdir -p $STATSDIR
+
+for e in 1 2; do
+	#first or second of pairs 
+	base="${LIBRARYID}_${e}"
+        
+        #job submission script
+	jobfile=${base}_step2.job
+        if [ -f $jobfile ]; then
+        echo "Job script for step2 already exists!"
+        exit
+        fi        
+        # sam file generated with bwa in step 1
+	sam_file=$MAPPEDDIR/$base.sam.gz
+        if [ ! -f $sam_file ]; then
+        echo "Data file $sam_file does not exist!"
+        exit
+        fi
+
+        #specific settings that has to be done for sort and join to work together
+	echo "LC_COLLATE=C; LC_ALL=C ; LANG=C ; export LC_ALL LANG">> $jobfile
+	echo "echo \"Environment: LC_COLLATE=\$LC_COLLATE, LC_ALL = \$LC_ALL, LANG = \$LANG \" " >> $jobfile
+	## these are the ones that mapped and mapped uniquely (added checks \$5>20 && \$12==\"XT:A:U\")
+	outfile=$SORTEDDIR/$base.mapped
+        if [ -f $outfile ]; then
+        echo "File $outfile already exists!"
+        exit
+        fi
+	
+        #file with mapping statostics
+        outfile2=$STATSDIR/SortedAlignment
+        if [ -f $outfile2 ]; then
+        echo "File $outfile2 already exists!"
+        exit
+        fi
+	
+        ##summary of the script
+	#	first 'cat' the sam file
+	#	samtools view the data, input is sam(-S) and filtering flag is 4
+	#	awk will first filter out scores less than 30
+	#  	then  it will filter out edit distances more than 2
+	#	finally it will output the alignment, reformatting the info from the sam file
+	#	this output will be sorted using sort tool
+	#	this will be written in plain text format to the file with . mapped extension
+	echo "     cat $sam_file | $SAMTOOLS view -S -F 4 - | awk '\$14==\"X0:i:1\" &&  \$5>=30 && \$12==\"XT:A:U\" {split(\$1,id,\"#\"); split(\$13,editDistField,\":\"); if (editDistField[3] <= $NUMBEROFMISMATCHES) {print id[1]\"\t\"\$2\"\t\"\$3\"\t\"\$4\"\t\"\$10}}' | sort -k 1,1 > $outfile" >> $jobfile
+	#count the number of aligned pairs
+	echo "      f=\`cat $outfile | wc -l \`" >> $jobfile
+
+	## perform the above for non-mapped pairs
+	outfile=$SORTEDDIR/$base.nonmapped
+	echo "      cat $sam_file | $SAMTOOLS view -S -f 4 - | awk '{split(\$1,id,\"#\"); print id[1]\"\t\"\$2\"\t\"\$3\"\t\"\$4\"\t\"\$10}' | sort -k 1,1 > $outfile" >> $jobfile 
+	echo "      n=\`cat $outfile | wc -l \`" >> $jobfile
+        echo "gzip $outfile " >> $jobfile
+
+
+	 ## mapped but not uniques or quality below 30s or mismatch above what we expect
+	echo "      m=\`cat $sam_file | $SAMTOOLS view -S -F 4 - | awk '{split(\$13,editDistField,\":\"); if (editDistField[3] > $NUMBEROFMISMATCHES || \$14!=\"X0:i:1\" || \$5<30 || \$12!=\"XT:A:U\") {print \$1}}' |  wc -l \`" >> $jobfile
+	echo "      total=\$((\$m+\$n+\$f))" >> $jobfile
+         
+        ## write out the statistics of alignment 
+	echo "      echo \"***** Total\\tuniquelyMapped\\tnonMapped\\tmappedButNotQualified \">> $outfile2 " >> $jobfile
+	echo "      echo -e \"${LIBRARYID}\t$e\t\$total\t\$f\t\$n\t\$m \" >> $outfile2" >> $jobfile
+        echo " exit " >> $jobfile
+	 
+        chmod 777 $jobfile
+        qsub -l h_vmem=20G -l h_rt=5:00:00  -m ea  -M taranova.maryna@gmail.com -o $PROJDIR/mappingHiC-pipeline/o.step2_${LIBRARYID}_${e}_out -e $PROJDIR/mappingHiC-pipeline/e.step2_${LIBRARYID}_${e}_error ${jobfile}
+done
+

@@ -1,0 +1,182 @@
+#!/bin/bash -ex
+
+# USAGE: runall step_number
+step=$1
+
+# argument list: 1:<LIBRARY ID, given to the library in the form captureC_R?_?? or HiC_R?_??>
+#                2:<directory with cleanedPairs - output of the mappingHiC-pipeline 
+#                3:<project directory. Note: project directory is the hic_pipeline folder, different from the project directory in mappingHiC-pipeline>
+#                4:<path to python>
+#                5:<path to bedtools>
+#                6:<path to bin directory that contains all executable scripts>
+#                7:<path to preprocessedForBias directory>
+#                8:<file with HindIII restriction enzyme fragments>
+#                9:<file with chromosome sizes>
+#                10:<distance threshold for calculating intrachromosomal interactions; excludes physically close interactions>
+#                11:<file with chromosome sizes sorted for ploting interaction matrix>
+libs=(SC D3 D6) # replicates combined 
+DATADIR=/srv/gsfs0/projects/kundaje/users/mtaranov/projects/dynamic3D/FIT-HI-C/mappingHiC-pipeline/data/cleanedPairs
+PROJDIR=/srv/gsfs0/projects/kundaje/users/mtaranov/projects/dynamic3D/FIT-HI-C/hic_pipeline_repl_combined_mappability-0.5
+python=/srv/gs1/software/python/python-2.7/bin/python
+bedtools=/srv/gs1/software/bedtools/2.21.0/bin/bedtools
+BINDIR=$PROJDIR/bin
+biasdir=$PROJDIR/data/preprocessedForBias
+REfile=/srv/gsfs0/projects/kundaje/users/mtaranov/projects/dynamic3D/FIT-HI-C/hic_pipeline_repl_combined/data/reference_genomes/hg19/Digest_ENCODEHg19_HindIII_None_19-38-29_25-11-2014.txt
+chrSizes=/srv/gsfs0/projects/kundaje/users/mtaranov/projects/dynamic3D/FIT-HI-C/hic_pipeline_repl_combined/data/reference_genomes/hg19/ref.fa.fai
+chrlens=/srv/gsfs0/projects/kundaje/users/mtaranov/projects/dynamic3D/FIT-HI-C/hic_pipeline_repl_combined/data/reference_genomes/hg19/chromosomeLengths_sorted_by_chr.txt
+
+#arguments used for naming the folders
+org=human
+ref=hg19
+RE=HindIII
+
+IntrachrThres=0
+RESOLUTION=40000 # 20kb
+mappThres=0.5 # mappability threshold in step 4 
+
+#folder with the windows midpoints
+inM=$PROJDIR/data/FixedWindowsMidpoints
+mkdir -p $inM
+
+
+#Fit-Hi-C parameters
+noOfBins=200 
+distUpThres=10000000 #10Mb
+distLowThres=$(($RESOLUTION*2)) #20kb 
+discBinsize=$RESOLUTION #20kb
+
+# Note: additional variables need to be specified in bin/step3_preprocess_for_bias_pipeline.sh, bin/step4_sparseICEnormalize and bin/step6_fithic
+
+################################################################ 
+#### Below are the steps taken here to go from cleanedPairs files 
+#### to before/after ICE contact counts at different resolutions
+################################################################
+# step1 generate fixed size midpoints. Note: needs to be run only once for a particular resolution
+# step2 get contacts at fixed window size
+# step3 preprocess genome for different biases. Note: needs to be run only once for a particular resolution
+# step4 normalize contact maps using ICE 
+# step5 calculate total contacts per fragment/window
+# step6 assign statistical significances using fit-hi-c on before and after ICE data
+################################################################
+
+## first create all the fixed size fragements 
+## place them into $PROJDIR/data/FixedWindowsMidpoints
+if [[ $step == 1 ]]; then
+
+	 for ref in hg19; do
+        org=human
+		for w in $RESOLUTION; do
+        	$python $BINDIR/generate_binned_midpoints.py $w $PROJDIR/data/reference_genomes/$ref/chromosomeLengths.txt $inM/$org-$ref.w$w
+		done
+    done
+
+## Get contacts at fixed window size 
+## place results into $PROJDIR/data/interactionCounts/beforeICE/
+
+## Replicates combined
+## Additional variables have to be specified in ../bin/step2_get-contactCounts-atFixedWindowSize
+elif [[ $step == 2 ]]; then
+    for (( i=0; i<${#libs[@]}; i++ )); do
+        lib=${libs[$i]}
+	for w in $RESOLUTION; do
+ 		$BINDIR/step2_get-contactCounts-atFixedWindowSize $w $IntrachrThres $lib $PROJDIR $DATADIR
+        done
+    done
+## preprocess the genome to get mappability per window 
+## place results into $PROJDIR/data/preprocessedForBias
+## the output file will have four fields:
+## <chr> <mid> <RE site> <mappability> 
+
+# Note: additional variable need to be specified in bin/step3_preprocess_for_bias_pipeline.sh
+elif [[ $step == 3 ]]; then
+        $BINDIR/step3_preprocess_for_bias_pipeline.sh $PROJDIR $python $biasdir $RESOLUTION $org $ref $RE $REfile $chrSizes 
+
+## Now normalize each library using sparse ICE implementation
+## place results into $PROJDIR/data/interactionCounts/afterICE
+
+# Note: additional variable need to be specified in bin/step4_sparseICEnormalize
+elif [[ $step == 4 ]]; then
+
+	intxndir=$PROJDIR/data/interactionCounts/beforeICE
+	outdir=$PROJDIR/data/interactionCounts/afterICE
+	mkdir -p $outdir
+	biasdir=$PROJDIR/data/preprocessedForBias
+
+	for w in $RESOLUTION; do
+		for (( i=0; i<${#libs[@]}; i++ )); do
+			lib=${libs[$i]}
+			echo $lib $ref $org $RE
+			mkdir -p $outdir/$w
+			outfile=$outdir/$w/${lib}_ListOfContacts_after_ICE
+			biasfile=$biasdir/$org-$ref.$RE.w$w
+			intxfile=$intxndir/$w/${lib}_ListOfContacts.gz
+			$PROJDIR/bin/step4_sparseICEnormalize $lib $biasfile $intxfile $mappThres $PROJDIR $outfile $w $python
+  
+		done
+	done
+
+## calculate total contacts per fragment/window
+## place results into $PROJDIR/data/ContactsPerFragment
+## the output files will have five fields:
+## <chr> <anything> <mid> <counts> <anything> 
+
+elif [[ $step == 5 ]]; then
+
+intxndir=$PROJDIR/data/interactionCounts/beforeICE
+inM=$PROJDIR/data/FixedWindowsMidpoints
+
+ContactsPerFragDir=$PROJDIR/data/ContactsPerFragment
+mkdir -p $ContactsPerFragDir
+
+for w in $RESOLUTION; do
+                for (( i=0; i<${#libs[@]}; i++ )); do
+                        lib=${libs[$i]}
+                        mkdir -p $ContactsPerFragDir/$w
+                        intxfile=$intxndir/$w/${lib}_ListOfContacts.gz                        
+                        outfile=$ContactsPerFragDir/$w/${lib}_ContactsPerFragment
+                        $PROJDIR/bin/step5-ContactsPerFragment $intxfile $inM/$org-$ref.w$w $outfile $python $PROJDIR $w $lib $ContactsPerFragDir/$w
+
+
+                done
+        done
+
+## do the fit-hi-c finally
+## place results into $PROJDIR/data/fit-hi-c-results
+
+# Note: additional variable need to be specified in bin/step6_fithic
+
+elif [[ $step == 6 ]]; then
+
+intxndir=$PROJDIR/data/fit-hi-c-results
+mkdir -p $intxndir
+
+for w in $RESOLUTION; do
+                for (( i=0; i<${#libs[@]}; i++ )); do
+                        lib=${libs[$i]}
+                        mkdir -p $intxndir/$w
+                        for htmlName in beforeICE afterICE; do
+                                $PROJDIR/bin/step6_fithic $PROJDIR $w $noOfBins $htmlName $distUpThres $distLowThres $discBinsize $intxndir/$w $lib
+                        done
+                done
+done
+
+elif [[ $step == 7 ]]; then
+
+        intxndir=$PROJDIR/data/interactionCounts/beforeICE
+        outdir=$PROJDIR/data/RawInteractionMatrix
+        mkdir -p $outdir
+
+        for w in $RESOLUTION; do
+                for (( i=0; i<${#libs[@]}; i++ )); do
+                        lib=${libs[$i]}
+                        mkdir -p $outdir/$w
+                        outfile=$outdir/$w/${lib}_RawInteractionMatrix
+                        intxfile=$intxndir/$w/${lib}_ListOfContacts.gz
+                        $PROJDIR/bin/step7_PlotRawContacts $lib $intxfile $PROJDIR $outfile $w $python $chrlens
+
+                done
+        done
+
+exit
+fi
+

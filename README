@@ -1,0 +1,38 @@
+The pipeline performs Fit-hi-c analysis with fixed size windows. The pipeline consists of two stages: mapping_all and hic_pipeline.
+ 
+
+In mapping_all:
+
+runall: This script calls all the other steps below in mapping/filtering pipeline
+pipeline: This script defines all the variables and a step to be run with runall
+step1_align: Align the reads using BWA to the reference genome. You will need the appropriate BWA index file.
+step2_sort: Filter for number of mismatches, mapping quality and unique mapping. 
+step3_joinAllCombinations: Take a join of the separately mapped XYZ_1.fq.gz and XYZ_2.fq.gz files to get paired reads.
+step3_removePCRdups: Remove the read pairs that map to exactly same coordinates (both ends). Keep only one pair out of many copies.
+
+
+
+In hic-pipeline: 
+
+Assignment to fixed size windowing. Process genome for mappability. Then, the normalization using ICE and applying Fit-Hi-C.
+This pipeline assumes that there are read pairs under the cleanedPairs folders.
+
+    In pipeline:
+    runall: This script calls all the other steps below
+    step1 in runall: create all the fixed size fragements. Step1 needs to be run only once for a given resolution/window size. Runs intractively 
+
+    In bin:
+    step2_get-contactCounts-atFixedWindowSize: get contacts at fixed window size
+    step3_preprocess_for_bias_pipeline.sh: preprocess the genome to get mappability per window. Note: needs to be run only once for a particular resolution.
+    step4_sparseICEnormalize: normalizes each library using sparse ICE implementation amd calculate biases for each window. 
+    step5-ContactsPerFragment: calculate total numbmer of contacts coming out of each window
+    step6_fithic: perform fit-hic on data before and after ICE.
+ 
+    In data/reference_genomes/hg19: chromosome length and HindIII fragmens files. 
+
+     
+In hic-pipeline_repl_combined:
+
+The same as hic-pipeline, but combines replicates in step2. Additional paramenters need to be specified in step 2.  
+
+

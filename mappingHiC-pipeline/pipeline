@@ -1,0 +1,20 @@
+#!/bin/bash 
+
+##run pipeline arguments:
+##              1:      <step 1,2,3,4> project directory, a directory in which mappingHiC-pipeline folder is located
+##              2:      <step 1> path to bwa
+##              3:      <step 1,2,3,4> LIBRARY ID (captureC_R?_?? or HiC_R?_??)
+##              4:      <step 1,2> Number of mismatches allowed in sequence alignments
+##              5:      <step 1> path to bwa alignment indices
+##              6:      <step 2> path to samtools
+##              7:      <step 4> path to python
+##              8:      <step 4> path to sort_loci.py 
+##              9:      <step 1> path to a directory with raw reads that are orginized into libs (captureC_R?_?? or HiC_R?_??), directories of raw reads with each hic-paired read set  having captureC_R?_??_1.fq.gz captureC_R?_??_2.fq.gz
+
+#./step1_align 		        $1	$2	$3	$4	$5                         $9
+#./step2_sort 		        $1      	$3	$4	        $6
+#./step3_joinAllCombinations    $1              $3
+./step4_removePCRdups 		$1		$3                            $7     $8
+
+exit
+

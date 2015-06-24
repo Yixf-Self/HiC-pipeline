@@ -1,0 +1,62 @@
+#!/bin/bash -ex
+
+# step 1 operations- perform alignments to reference genomes. Output: sam and sai in MAPPEDDIR
+# argument list: 1:<project directory> 
+#		 2:<path to bwa> 
+#		 3:<LIBRARY ID>
+#		 4:<Number of mismatches allowed in the alignments>
+#		 5:<Path to the bwa index of the reference genome>
+#                6:<path to directory with raw reads>
+PROJDIR=$1
+bwa=$2
+LIBRARYID=$3
+NUMBEROFMISMATCHES=$4
+BWAINDICES=$5
+# directory of raw reads with each hic-paired read set  having captureC_SC_R2_1.fq.gz captureC_SC_R2_2.fq.gz
+DATADIR=$6/$LIBRARYID
+
+#directories to store the alignment results
+MAPPEDDIR=${PROJDIR}/mappingHiC-pipeline/data/mappedReads/${LIBRARYID}
+
+#create the mapping directory, -p ensures no errors occur
+mkdir -p $MAPPEDDIR
+
+
+for e in 1 2; do
+	#first or second of pairs 
+	base="${LIBRARYID}_${e}"
+
+	jobfile=${base}_step1.job
+        if [ -f $jobfile ]; then
+        echo "Job script for step1 already exists!"
+        exit
+        fi
+	sam_file=$MAPPEDDIR/$base.sam.gz
+        if [ -f $sam_file ]; then
+        echo "File $sam_file already exists!"
+        exit
+        fi
+	sai_file=${MAPPEDDIR}/${base}.sai.gz
+        if [ -f $sai_file ]; then
+        echo "File $sai_file already exists!"
+        exit
+        fi
+
+	#the fastq file for the first or second of the pair
+	fastqZIP=$DATADIR/${base}.fq.gz
+        if [ ! -f $fastqZIP ]; then
+        echo "Data file $fastqZIP does not exist!"
+        exit
+        fi
+
+        echo "  $bwa aln  $BWAINDICES $fastqZIP > $sai_file" >> $jobfile
+        echo "  $bwa samse $BWAINDICES $sai_file  $fastqZIP > $sam_file" >> $jobfile
+        echo "exit" >> $jobfile
+        echo "  gzip $sai_file" >> $jobfile
+        echo "  gzip $sam_file" >> $jobfile
+        echo "exit" >> $jobfile
+        
+        chmod 777 $jobfile
+#        qsub -l testq=1 -o $PROJDIR/mappingHiC-pipeline/o.step1_out -e $PROJDIR/mappingHiC-pipeline/e.step1_error ${jobfile}
+        qsub -l h_vmem=20G  -l h_rt=70:00:00 -m ea  -M taranova.maryna@gmail.com -o $PROJDIR/mappingHiC-pipeline/o.step1_${LIBRARYID}_${e}_out -e $PROJDIR/mappingHiC-pipeline/e.step1_${LIBRARYID}_${e}_error ${jobfile}
+done

@@ -1,0 +1,56 @@
+#!/bin/bash -ex
+
+# step 1 operations- join of the separately mapped  files to get paired HiC reads.
+# argument list: 1:<project directory> 
+#                2:<LIBRARY ID, given to the library in the form captureC_R?_?? or HiC_R?_??>
+PROJDIR=$1
+LIBRARYID=$2
+
+#directory with the sorted results
+SORTEDDIR=${PROJDIR}/mappingHiC-pipeline/data/sortedMappedReads/${LIBRARYID}
+#directory to store the paired HiC reads
+EXTRACTEDDIR=${PROJDIR}/mappingHiC-pipeline/data/extractedPairs/${LIBRARYID}
+#alignment statistics directory
+STATSDIR=${PROJDIR}/mappingHiC-pipeline/data/stats
+
+mkdir -p $EXTRACTEDDIR
+
+#file with the sorted first reads 
+file1=$SORTEDDIR/${LIBRARYID}_1.mapped
+        if [ ! -f $file1 ]; then
+        echo "Data file $file1 does not exist!"
+        exit
+        fi
+#file with the sorted second reads 
+file2=$SORTEDDIR/${LIBRARYID}_2.mapped
+        if [ ! -f $file2 ]; then
+        echo "Data file $file2 does not exist!"
+        exit
+        fi
+	#name of the cluster job file
+	jobfile=${LIBRARYID}_step3.job
+        if [ -f $jobfile ]; then
+        echo "Job script for step3 already exists!"
+        exit
+        fi
+        # file to write out the paired HiC reads
+	outfile=$EXTRACTEDDIR/${LIBRARYID}_extractedPairs
+        if [ -f $outfile ]; then
+        echo "File $outfile already exists!"
+        exit
+        fi
+	outfile2=$STATSDIR/NumberOfExtractedPairs
+        if [ -f $outfile2 ]; then
+        echo "File $outfile2 already exists!"
+        exit
+        fi
+	echo "LC_COLLATE=C; LC_ALL=C ; LANG=C ; export LC_ALL LANG">> $jobfile
+	echo "echo \"Environment: LC_COLLATE=\$LC_COLLATE, LC_ALL = \$LC_ALL, LANG = \$LANG \" " >> $jobfile
+	echo "      join $file1 $file2 > $outfile" >> $jobfile
+	echo "      n=\`cat $outfile | wc -l \`" >> $jobfile
+        echo "gzip $outfile " >> $jobfile
+	echo "      echo -e \"${LIBRARYID}\t\$n \" >> $outfile2" >> $jobfile
+
+chmod 777 $jobfile
+        qsub -l h_vmem=20G -l h_rt=3:00:00 -m ea  -M taranova.maryna@gmail.com -o $PROJDIR/mappingHiC-pipeline/o.step3_${LIBRARYID}_out -e $PROJDIR/mappingHiC-pipeline/e.step3_${LIBRARYID}_error ${jobfile}
+

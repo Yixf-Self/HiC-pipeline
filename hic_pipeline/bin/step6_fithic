@@ -1,0 +1,113 @@
+#!/bin/bash -ex
+
+# step 6 operations:
+#  - perform fit-hi-c on data before and after ICE
+#  - places results into $PROJDIR/data/fit-hi-c-results
+
+# argument list: 1:<project directory> 
+#                2:<resolution/window size> 
+#                3:<number of bins> 
+#                4:<before and after ICE>
+#                5:<low genomic distance boundary>          
+#                6:<upper genomic distance boundary>
+#                7:<bin size = resolution/window size>
+#                8:<output directory>
+#                9:<library ID>
+
+set -o nounset
+set -o pipefail
+set -o errexit 
+
+PROJDIR=$1
+w=$2 #c
+noOfBins=$3
+beforeAfter=$4 #beforeICE or afterICE
+distUpThres=$5 #10000000 #10M
+distLowThres=$6 #20000
+discBinsize=$7 #50000
+outputdir=$8
+libID=$9
+
+# directory that contains executable scripts 
+BINDIR=$PROJDIR/bin
+
+#Additional variables:
+mappabilityThres=1 # minimum number of hits per locus that has to exist to call it mappable. DEFAULT is 1.
+noOfPasses=1 # number of passes after the initial (before) fit. DEFAULT is 1 (after)
+residualFactor=-1 # how many times better residual is desired for splines compared to power-law fit. Default is 10
+
+module load r/3.1.1
+python=/srv/gs1/software/python/python-2.7/bin/python
+inI=$PROJDIR/data/interactionCounts/beforeICE/$w # I always use the contact counts before ICE
+inF=$PROJDIR/data/ContactsPerFragment/$w # only before ICE has these files
+inB=$PROJDIR/data/interactionCounts/afterICE/$w # I always use the bias files created after ICE
+
+	localdir=$outputdir/$beforeAfter/${libID}
+	mkdir -p $localdir/$beforeAfter/${libID}
+
+	log=$localdir/${libID}_log.conf.file
+	html=$localdir/${libID}_fithic.html
+	date >> $log
+	echo =$w noOfBins=$noOfBins mappabilityThres=$mappabilityThres noOfPasses=$noOfPasses distUpThres=$distUpThres distLowThres=$distLowThres discBinsize=$discBinsize residualFactor=$residualFactor>> $log 
+	echo >> $log
+
+	echo \<html\> > $html
+	echo \<head\>\<meta http-equiv=\"content-type\" content=\"text/html; charset=UTF-8\"\>\<title\>\</title\>\</head\> >>$html
+	echo \<body\> >> $html
+	echo \<table  border=\"1\"\> >> $html
+	echo \<tbody\> >> $html
+
+	echo \<tr\> >> $html
+	echo \<th scope=\"col\"\> Library label \</th\> >> $html
+	for t in `seq $(($noOfPasses+1))`;do
+		#echo \<th scope=\"col\"\> Equal occupancy binning \</th\> >> $html
+		echo \<th scope=\"col\"\> Fitting - power-law \</th\> >> $html
+		echo \<th scope=\"col\"\> Fitting - spline \</th\> >> $html
+		echo \<th scope=\"col\"\> Extract outliers - power-law \</th\> >> $html
+		echo \<th scope=\"col\"\> Extract outliers - spline \</th\> >> $html
+		echo \<th scope=\"col\"\> FDR - compare all \</th\> >> $html
+		echo \<th scope=\"col\"\> FDR - spline \</th\> >> $html
+		echo \<th scope=\"col\"\> Binning bias \</th\> >> $html
+	done
+	echo \</tr\> >> $html
+
+	noOfCols=$((($noOfPasses+1)*7))
+	echo \<tr\> >> $html
+	echo \<th\> \</th\> >> $html
+	for t in `seq $noOfCols`; do
+	   echo \<th\> $t \</th\> >> $html
+	done
+	echo \</tr\> >> $html
+
+  	  jobfile=$PROJDIR/pipeline/$libID-$beforeAfter-step6-fithic-$w.job
+          echo " module load r/3.1.1" >> $jobfile
+	  if [[ $beforeAfter == "afterICE" ]]; then
+	  		echo " $python $BINDIR/fit-hic-LATEST.py -l "$libID" -t $inB/${libID}_ListOfContacts_after_ICE.biases.gz -f $inF/${libID}_ContactsPerFragment.gz -i $inI/${libID}_ListOfContacts.gz -L $distLowThres -U $distUpThres -b $noOfBins -m $mappabilityThres -p $noOfPasses -d $discBinsize -r $residualFactor -o $localdir --comparisonMode --usebinning > $localdir/$libID.out" >> $jobfile
+	  else
+	  		echo " $python $BINDIR/fit-hic-LATEST.py -l "$libID" -f $inF/${libID}_ContactsPerFragment.gz -i $inI/${libID}_ListOfContacts.gz -L $distLowThres -U $distUpThres -b $noOfBins -m $mappabilityThres -p $noOfPasses -d $discBinsize -r $residualFactor -o $localdir --comparisonMode --usebinning > $localdir/$libID.out" >> $jobfile
+	  fi
+
+	  chmod 777 $jobfile
+
+
+	  echo \<tr\> >> $html
+	  echo \<td\> $libID \</td\> >> $html
+	  for t in `seq $(($noOfPasses+1))`;do
+		echo \<td\> \<a href=\"$libID.plaw_pass$t.png\"\>\<img src=\"$libID.plaw_pass$t.png\"  width=400\> \</a\>\</td\> >> $html
+		echo \<td\> \<a href=\"$libID.spline_pass$t.png\"\>\<img src=\"$libID.spline_pass$t.png\"  width=400\> \</a\>\</td\> >> $html
+		echo \<td\> \<a href=\"$libID.plaw_pass$t.extractOutliers.png\"\>\<img src=\"$libID.plaw_pass$t.extractOutliers.png\" width=400\> \</a\>\</td\> >> $html
+		echo \<td\> \<a href=\"$libID.spline_pass$t.extractOutliers.png\"\>\<img src=\"$libID.spline_pass$t.extractOutliers.png\" width=400\> \</a\>\</td\> >> $html
+
+		echo \<td\> \<a href=\"$libID.comparison_pass$t.png\"\>\<img src=\"$libID.comparison_pass$t.png\"  width=400\> \</a\>\</td\> >> $html
+		#echo \<td\> \<a href=\"$libID.plaw_pass$t.qplot.png\"\>\<img src=\"$libID.plaw_pass$t.qplot.png\"  width=400\> \</a\>\</td\> >> $html
+		#echo \<td\> \<a href=\"$libID.spline_pass$t.qplot.png\"\>\<img src=\"$libID.spline_pass$t.qplot.png\"  width=400\> \</a\>\</td\> >> $html
+		echo \<td\> \<a href=\"$libID.comparisonDisc_pass$t.png\"\>\<img src=\"$libID.comparisonDisc_pass$t.png\"  width=400\> \</a\>\</td\> >> $html
+		echo \<td\> \<a href=\"$libID.comparisonFitDisc_pass$t.png\"\>\<img src=\"$libID.comparisonFitDisc_pass$t.png\"  width=400\> \</a\>\</td\> >> $html
+	  done
+	  echo \<tr\> >> $html
+echo \</tbody\>\</table\> >> $html
+echo \</body\>\</html\> >> $html
+
+qsub -l h_vmem=20G -l h_rt=10:00:00 -m ea  -M taranova.maryna@gmail.com -o $PROJDIR/pipeline/o.${libID}_${beforeAfter}_step6_out -e $PROJDIR/pipeline/e.${libID}_${beforeAfter}_step6_error ${jobfile}
+exit
+

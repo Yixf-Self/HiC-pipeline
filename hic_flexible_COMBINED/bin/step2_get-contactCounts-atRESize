@@ -1,0 +1,103 @@
+#!/bin/bash
+
+# step 2 operations:
+#  - get contacts at fixed window size 
+#  - place results into $PROJDIR/data/interactionCounts/beforeICE/
+
+set -o nounset
+set -o pipefail
+set -o errexit 
+
+# argument list: 1:<resolution/window size> 
+#                2:<distance threshold for calculating intrachromosomal interactions; excludes physically close interactions> 
+#                3:<LIBRARY ID>
+#                4:<project directory>
+#                5:<directory with cleanedPairs - output of the mappingHiC-pipeline>
+#                6:<directory to place the output of step2. Currently: $PROJDIR/data/interactionCounts/beforeICE/>
+
+
+RE=$1
+IntrachrThres=$2
+lib=$3
+PROJDIR=$4
+replicates=$5
+python=$6
+bedtools=$7
+ReadLength=$8
+blacklist=$9
+PROJDIR2=$PROJDIR/pipeline
+outdirREsites=$PROJDIR/data/RESites
+outdirInteraction=$PROJDIR/data/interactionCounts/beforeICE/RE$RE
+outfileREsites=$outdirREsites/REFrags.RE$RE
+IntSite1Temp=$outdirInteraction/${lib}_IntSite1Temp
+IntSite2Temp=$outdirInteraction/${lib}_IntSite2Temp
+Site1NoBlack=$outdirInteraction/${lib}_Site1NoBlack
+Site2NoBlack=$outdirInteraction/${lib}_Site2NoBlack
+Read1=$outdirInteraction/${lib}_Read1
+Read2=$outdirInteraction/${lib}_Read2
+ContactPairs=$outdirInteraction/${lib}_ListOfContacts
+mkdir -p $outdirInteraction
+#mkdir -p $outdirREsites
+
+
+
+if [ -f $ContactPairs.gz ]; then
+echo "File $ContactPairs.gz already exists!"
+exit
+fi
+
+
+for ref in hg19; do
+	jobfile=$PROJDIR2/$lib-step2-RESizeW-RE$RE.job
+  
+        if [ -f $jobfile ]; then
+        echo "Job script $jobfile already exists!"
+        exit
+        fi
+        
+        
+        if [ $replicates == combined ]; then
+           infile=$DATADIR/${lib}_R?/${lib}_R?_cleanedPairs.gz # replicates combined
+        else
+           infile=$DATADIR/${lib}/${lib}_cleanedPairs.gz # individual replicates
+        fi
+
+        if [ ! -f $infile ]; then
+        echo "Data file $infile does not exist!"
+        exit
+        fi
+
+        # remove pairs separated closer than threshold, remove chrM
+        echo    "zcat $infile \\" >> $jobfile
+        echo    "| awk 'length(\$3)<=5 && length(\$7)<=5 {print}' | grep -v chrM \\" >> $jobfile
+        echo    "| awk '\$3!=\$7 || (\$3==\$7 && (\$4-\$8> t || \$8-\$4> t)) {print \$3,\$4,\$4+$ReadLength,\$1}' t=$IntrachrThres | /usr/bin/perl -p -i -e 's/ /\t/g' > $IntSite1Temp" >> $jobfile
+        echo    "zcat $infile \\" >> $jobfile
+        echo    "| awk 'length(\$3)<=5 && length(\$7)<=5 {print}' | grep -v chrM \\" >> $jobfile
+        echo    "| awk '\$3!=\$7 || (\$3==\$7 && (\$4-\$8> t || \$8-\$4> t)) {print \$7, \$8, \$8+$ReadLength, \$1}' t=$IntrachrThres | /usr/bin/perl -p -i -e 's/ /\t/g' > $IntSite2Temp" >> $jobfile
+
+        # remove reads that overlap with Black list 
+        echo    "$bedtools intersect -v -a $IntSite1Temp -b $blacklist > $Site1NoBlack" >> $jobfile
+        echo    "$bedtools intersect -v -a $IntSite2Temp -b $blacklist > $Site2NoBlack" >> $jobfile
+        
+        
+        # assign reads to RE fragments
+        echo    "$bedtools intersect -wao -a $Site1NoBlack -b $outfileREsites \\" >> $jobfile
+        echo    "| awk '{print  \$1, \$8, \$4}'| sort -k3,3| uniq -f 2 \\" >> $jobfile
+        echo    "| awk '{print  \$3, \$1, \$2}'| sort -k1,1 > $Read1" >> $jobfile
+
+        echo    "$bedtools intersect -wao -a $Site2NoBlack -b $outfileREsites \\" >> $jobfile
+        echo    "| awk '{print  \$1, \$8, \$4}'| sort -k3,3| uniq -f 2 \\" >> $jobfile
+        echo    "| awk '{print  \$3, \$1, \$2}'| sort -k1,1> $Read2" >> $jobfile
+        
+        # join two fragment reads and calculate unique pairs
+        echo    "join $Read1 $Read2 \\" >> $jobfile
+        echo    "| awk '{if(\$2<\$4 || (\$2==\$4 && \$3<=\$5)) print \$2,\$3,\$4,\$5; else print \$4,\$5,\$2, \$3}' \\" >> $jobfile
+        echo    "| sort | uniq -c \\" >> $jobfile
+        echo    "| awk 'OFS=\"\\t\"{print \$2,\$3,\$4,\$5,\$1}' > $ContactPairs" >> $jobfile
+        
+        echo    "gzip $ContactPairs" >> $jobfile
+        echo    "rm $IntSite1Temp $IntSite2Temp $Site1NoBlack $Site2NoBlack $Read1 $Read2" >> $jobfile
+    
+	echo	"	" >> $jobfile;chmod 777 $jobfile
+        qsub -l h_vmem=20G -l h_rt=8:00:00 -m ea  -M taranova.maryna@gmail.com -o $PROJDIR2/o.step2_${lib}_RE${RE}_out -e $PROJDIR2/e.step2_${lib}_RE${RE}_error ${jobfile}
+done

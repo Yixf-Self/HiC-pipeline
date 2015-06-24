@@ -1,0 +1,92 @@
+#!/bin/bash
+
+# step 2 operations:
+#  - get contacts at fixed window size 
+#  - place results into $PROJDIR/data/interactionCounts/beforeICE/
+
+set -o nounset
+set -o pipefail
+set -o errexit 
+
+# argument list: 1:<resolution/window size> 
+#                2:<distance threshold for calculating intrachromosomal interactions; excludes physically close interactions> 
+#                3:<LIBRARY ID>
+#                4:<project directory>
+#                5:<directory with cleanedPairs - output of the mappingHiC-pipeline>
+#                6:<directory to place the output of step2. Currently: $PROJDIR/data/interactionCounts/beforeICE/>
+
+w=$1
+IntrachrThres=$2
+lib=$3
+PROJDIR=$4
+DATADIR=$5
+PROJDIR2=$PROJDIR/pipeline
+outdir=$PROJDIR/data/interactionCounts/beforeICE/$w
+mkdir -p $outdir
+
+################################
+## Outline of each awk line ##
+  #read
+	#eliminate random chrs etc -- MAY change from organism to organism
+	#eliminate very close intrachr counts -- MAY change from lib to lib, and org to org
+	#bin using the window size 
+	#sort-uniq to count 
+	#print
+	#compress
+################################
+
+
+if [ ! -f $DATADIR/${lib}/${lib}_cleanedPairs.gz ]; then
+echo "Data file $DATADIR/${lib}/${lib}_cleanedPairs.gz does not exist!"
+exit
+fi
+
+if [ -f $outdir/${lib}_ListOfContacts.gz ]; then
+echo "File $outdir/${lib}_ListOfContacts.gz already exists!"
+exit
+fi
+
+
+
+for ref in hg19; do
+	jobfile=$PROJDIR2/$lib-step2-FixedSizeW-w$w.job
+  
+        if [ -f $jobfile ]; then
+        echo "Job script $jobfile already exists!"
+        exit
+        fi
+
+	echo 	"zcat $DATADIR/${lib}/${lib}_cleanedPairs.gz \\"  >> $jobfile
+	echo	"| awk 'length(\$3)<=5 && length(\$7)<=5 {print}' | grep -v chrM \\" >> $jobfile
+	echo	"| awk '\$3!=\$7 || (\$3==\$7 && (\$4-\$8> t || \$8-\$4> t)) {print}' t=$IntrachrThres \\" >> $jobfile
+	echo	"| awk '{print \$3,int(\$4/r)*r,\$7,int(\$8/r)*r}' r=$w \\" >> $jobfile
+	echo	"| awk '{if(\$1<\$3 || (\$1==\$3 && \$2<=\$4)) print \$1,\$2,\$3,\$4; else print \$3,\$4,\$1,\$2}' | sort | uniq -c \\" >> $jobfile
+	echo	"| awk 'OFS=\"\\t\"{print \$2,\$3+r/2,\$4,\$5+r/2,\$1}' r=$w > $outdir/${lib}_ListOfContacts 	" >> $jobfile
+		
+        echo "gzip $outdir/${lib}_ListOfContacts " >> $jobfile
+	echo	"	" >> $jobfile;chmod 777 $jobfile
+        qsub -l h_vmem=20G -m ea  -M taranova.maryna@gmail.com -o $PROJDIR2/o.step2_${lib}_out -e $PROJDIR2/e.step2_${lib}_error ${jobfile}
+done
+
+#	# Replicates combined
+#	for lib in ERG_lib2 GFP_lib2; do
+#	#ERG_lib2_r1 ERG_lib2_r2 ERG_lib2_r3 ERG_lib2_r4 GFP_lib2_r1 GFP_lib2_r2 GFP_lib2_r3 GFP_lib2_r4 ERG_lib2 GFP_lib2; do
+#		jobfile=$lib-countContacts-fixedSizeWindows-w$w.job
+#		echo    "#!/bin/bash -ex" > $jobfile; echo    "#$ -cwd" >> $jobfile; echo    "#$ -l longjob=TRUE" >> $jobfile;  echo    "#$ -l h_vmem=8G" >> $jobfile;
+#		echo    "#$ -l rhel=6" >> $jobfile; echo    "#$ -j y" >> $jobfile; echo    "source ~/.bashrc" >> $jobfile; echo    hostname >> $jobfile; echo    "" >> $jobfile
+#
+#		echo 	"zcat $DATADIR/${lib}_r?/*.gz \\"  >> $jobfile
+#		echo	"| awk 'length(\$3)<=5 && length(\$7)<=5 {print}' | grep -v chrM \\" >> $jobfile
+#		echo	"| awk '\$3!=\$7 || (\$3==\$7 && (\$4-\$8> t || \$8-\$4> t)) {print}' t=$IntrachrThres \\" >> $jobfile
+#		echo	"| awk '{print \$3,int(\$4/r)*r,\$7,int(\$8/r)*r}' r=$w \\" >> $jobfile
+#		echo	"| awk '{if(\$1<\$3 || (\$1==\$3 && \$2<=\$4)) print \$1,\$2,\$3,\$4; else print \$3,\$4,\$1,\$2}' | sort | uniq -c \\" >> $jobfile
+#		echo	"| awk 'OFS=\"\\t\"{print \$2,\$3+r/2,\$4,\$5+r/2,\$1}' r=$w > $outdir/${lib} 	" >> $jobfile
+#		echo	"gzip $outdir/${lib}" >> $jobfile
+#		
+#		echo	"	" >> $jobfile;chmod +x $jobfile
+#		qsub -N $lib-countContacts-fixedSizeWindows-w$w $jobfile
+#	done
+#done
+#
+#
+#

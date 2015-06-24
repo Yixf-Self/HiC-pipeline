@@ -1,0 +1,31 @@
+#!/bin/bash
+
+
+intxnFile=$1
+outfile=$2
+python=$3
+lib=$4
+w=$5
+PROJDIR=$6
+bindir=$PROJDIR/bin
+
+if [ ! -f $intxnFile ]; then
+echo "Data file $intxnFile does not exist!"
+exit
+fi
+
+if [ -f $outfile ]; then
+echo "File $outfile already exists!"
+exit
+fi
+
+  jobfile=${lib}-step2-ScatterContactCounts-RE$w.job
+  if [ -f $jobfile ]; then
+  echo "Job script $jobfile already exists!"
+  exit
+  fi    
+  
+    echo "$python $bindir/plot_ScatterContactCounts.py $intxnFile  $lib $w ${outfile}" >> $jobfile 
+    chmod 777 $jobfile
+    
+    qsub -l h_vmem=20G -l h_rt=3:00:00 -m ea  -M taranova.maryna@gmail.com -o $PROJDIR/pipeline/o.${lib}_RE${w}_step2a_out -e $PROJDIR/pipeline/e.${lib}_RE${w}_step2a_error ${jobfile}

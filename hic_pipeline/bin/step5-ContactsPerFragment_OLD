@@ -1,0 +1,40 @@
+#!/bin/bash
+
+ListOfContacts=$1
+FixedWindowsMidpoints=$2
+outfile=$3
+python=$4
+PROJDIR=$5
+w=$6
+lib=$7
+outdir=$8
+
+
+tmp=$outdir/${lib}_tmp
+ContactsPerFragment=$outdir/${lib}_ContactsPerFragmentTemp
+command1="touch $tmp"
+command2="touch $ContactsPerFragment"
+command3="zcat $ListOfContacts | awk '{print \$1, \$2, \$5}' > $tmp"
+command4="zcat $ListOfContacts | awk '{print \$3, \$4, \$5}' >> $tmp"
+
+command5="sort -k 1,1 $tmp | cat - <(echo \"\") | gawk '(\$1==key1 && \$2==key2) { sum+=\$3} (\$1 != key1 || \$2 != key2) {if (NR>1){print key1, key2, sum} key1=\$1; key2=\$2; sum=\$3}' > $ContactsPerFragment"
+
+command6="$python $PROJDIR/bin/MergeCounts.py $FixedWindowsMidpoints  $ContactsPerFragment $outfile"
+
+command7="gzip $outfile"
+command8="rm $tmp $ContactsPerFragment"
+
+jobfile=$PROJDIR/pipeline/${lib}-step5-ContactsPerFragment-w${w}_OLD.job
+    echo "LC_COLLATE=C; LC_ALL=C ; LANG=C ; export LC_ALL LANG">> $jobfile
+    echo "$command1" >> $jobfile
+    echo "$command2" >> $jobfile
+    echo "$command3" >> $jobfile
+    echo "$command4" >> $jobfile
+    echo "$command5" >> $jobfile
+    echo "$command6" >> $jobfile
+    echo "$command7" >> $jobfile
+    echo "$command8" >> $jobfile
+
+chmod 777 $jobfile
+
+#qsub -l testq=1  -m ea  -M taranova.maryna@gmail.com -o $PROJDIR/pipeline/o.${lib}_step5_out -e $PROJDIR/pipeline/e.${lib}_step5_error ${jobfile}

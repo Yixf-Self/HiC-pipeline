@@ -1,0 +1,66 @@
+#!/bin/bash
+
+# step 4 operations:
+#  - normalizes each library using sparse ICE implementation
+#  - calculate biases for each window.
+#  - places results into $PROJDIR/data/interactionCounts/afterICE
+
+# argument list: 1:<library ID> 
+#                2:<preprocessedForBias file> 
+#                3:<file with contacts at fixed window size> 
+#                4:<mappability threshold>
+#                5:<project directory>          
+#                6:<file to write biases>
+#                7:<path to python>
+#                8:<resolution/window size>
+#
+
+set -o nounset
+set -o pipefail
+set -o errexit 
+
+lib=$1
+biasFile=$2
+intxnFile=$3
+mappThres=$4 # 0.3 for now
+PROJDIR=$5
+outfile=$6
+w=$7
+python=$8
+
+#additional variables: 
+norm=l1 # l1 or l2 norm
+bindir=$PROJDIR/bin # path to bin directory that contains all executable scripts
+
+if [ ! -f $intxnFile ]; then
+echo "Data file $intxnFile does not exist!"
+exit
+fi
+
+if [ -f $outfile ]; then
+echo "File $outfile already exists!"
+exit
+fi
+
+  jobfile=${lib}-step4-FlexSizeW-RE$w.job
+  if [ -f $jobfile ]; then
+  echo "Job script $jobfile already exists!"
+  exit
+  fi    
+  
+#  command1="zcat $intxnFile | grep -v chrY > $intxnFile.$lib.temp"
+#  command2="cat $biasFile | grep -v chrY > $biasFile.$lib.temp"
+  command1="zcat $intxnFile > $intxnFile.$lib.temp"
+  command2="cat $biasFile  > $biasFile.$lib.temp"
+  command3="$python $bindir/ICE-with-sparseMatrix.py $intxnFile.$lib.temp $biasFile.$lib.temp $norm $outfile $mappThres"
+  command4="rm -rf $intxnFile.$lib.temp $biasFile.$lib.temp"
+
+    echo " $command1" >> $jobfile
+    echo " $command2" >> $jobfile
+    echo " $command3" >> $jobfile
+    echo " $command4" >> $jobfile
+    echo "gzip $outfile; gzip $outfile.biases " >> $jobfile
+    echo >> $jobfile
+    chmod 777 $jobfile
+    
+    qsub -l h_vmem=20G -l h_rt=25:00:00 -m ea  -M taranova.maryna@gmail.com -o $PROJDIR/pipeline/o.${lib}_RE${w}_step4_out -e $PROJDIR/pipeline/e.${lib}_RE${w}_step4_error ${jobfile}
